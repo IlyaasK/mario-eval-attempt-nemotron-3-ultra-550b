@@ -1,0 +1,42 @@
+From ce4e096fb88a09a6672b7b79b2afacd95592bbf9 Mon Sep 17 00:00:00 2001
+From: agent <agent@mario-eval>
+Date: Tue, 24 Nov 2026 22:10:49 +0000
+Subject: [PATCH 15/19] Optimize find_floor_height_and_data: register pointer
+ for FloorGeometry struct
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- find_floor_height_and_data: use register struct FloorGeometry *fg pointer to avoid repeated sFloorGeo address calculations and stores
+
+Speedup: 1.060x → 1.083x (console geomean). All verification gates pass.
+---
+ src/engine/surface_collision.c | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/src/engine/surface_collision.c b/src/engine/surface_collision.c
+index 87019f4..ec5453e 100644
+--- a/src/engine/surface_collision.c
++++ b/src/engine/surface_collision.c
+@@ -391,12 +391,13 @@ f32 find_floor_height_and_data(f32 xPos, f32 yPos, f32 zPos, struct FloorGeometr
+     *floorGeo = NULL;
+ 
+     if (floor != NULL) {
+-        sFloorGeo.normalX = floor->normal.x;
+-        sFloorGeo.normalY = floor->normal.y;
+-        sFloorGeo.normalZ = floor->normal.z;
+-        sFloorGeo.originOffset = floor->originOffset;
++        register struct FloorGeometry *fg = &sFloorGeo;
++        fg->normalX = floor->normal.x;
++        fg->normalY = floor->normal.y;
++        fg->normalZ = floor->normal.z;
++        fg->originOffset = floor->originOffset;
+ 
+-        *floorGeo = &sFloorGeo;
++        *floorGeo = fg;
+     }
+     return floorHeight;
+ }
+-- 
+2.43.0
+

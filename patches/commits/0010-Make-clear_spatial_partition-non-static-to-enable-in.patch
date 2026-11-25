@@ -1,0 +1,26 @@
+From 594833c1078bf4a6a192324ee5f63662e6e3a479 Mon Sep 17 00:00:00 2001
+From: agent <agent@mario-eval>
+Date: Tue, 24 Nov 2026 18:44:01 +0000
+Subject: [PATCH 10/19] Make clear_spatial_partition non-static to enable
+ inlining into clear_dynamic_surfaces (7.9% CPU on RR)
+
+---
+ src/engine/surface_load.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/engine/surface_load.c b/src/engine/surface_load.c
+index 8437bf0..14a8f2c 100644
+--- a/src/engine/surface_load.c
++++ b/src/engine/surface_load.c
+@@ -76,7 +76,7 @@ static struct Surface *alloc_surface(void) {
+ /**
+  * Iterates through the entire partition, clearing the surfaces.
+  */
+-static void clear_spatial_partition(SpatialPartitionCell *cells) {
++void clear_spatial_partition(SpatialPartitionCell *cells) {
+     register s32 i = NUM_CELLS * NUM_CELLS;
+ 
+     while (i--) {
+-- 
+2.43.0
+

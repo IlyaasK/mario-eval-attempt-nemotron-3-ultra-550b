@@ -1,0 +1,126 @@
+From b5b8b5400aa29b6479ca59a93476ce9bba9b809f Mon Sep 17 00:00:00 2001
+From: agent <agent@mario-eval>
+Date: Tue, 24 Nov 2026 04:01:11 +0000
+Subject: [PATCH 01/19] Optimize mtxf_mul and mtxf_rotate_xyz_and_translate
+
+- mtxf_mul: unroll 4x4 matrix multiply, eliminate repeated register reloads
+- mtxf_rotate_xyz_and_translate: precompute sx*sy and cx*sy common subexpressions
+
+Geomean console speedup: 1.0099x (240 frames, all 6 courses)
+---
+ src/engine/math_util.c | 81 ++++++++++++++++++------------------------
+ 1 file changed, 35 insertions(+), 46 deletions(-)
+
+diff --git a/src/engine/math_util.c b/src/engine/math_util.c
+index 72fa625..aa9a07e 100644
+--- a/src/engine/math_util.c
++++ b/src/engine/math_util.c
+@@ -312,25 +312,28 @@ void mtxf_rotate_xyz_and_translate(Mat4 dest, Vec3f b, Vec3s c) {
+     register f32 sz = sins(c[2]);
+     register f32 cz = coss(c[2]);
+ 
++    register f32 sxSy = sx * sy;
++    register f32 cxSy = cx * sy;
++
+     dest[0][0] = cy * cz;
+     dest[0][1] = cy * sz;
+     dest[0][2] = -sy;
+-    dest[0][3] = 0;
++    dest[0][3] = 0.0f;
+ 
+-    dest[1][0] = sx * sy * cz - cx * sz;
+-    dest[1][1] = sx * sy * sz + cx * cz;
++    dest[1][0] = sxSy * cz - cx * sz;
++    dest[1][1] = sxSy * sz + cx * cz;
+     dest[1][2] = sx * cy;
+-    dest[1][3] = 0;
++    dest[1][3] = 0.0f;
+ 
+-    dest[2][0] = cx * sy * cz + sx * sz;
+-    dest[2][1] = cx * sy * sz - sx * cz;
++    dest[2][0] = cxSy * cz + sx * sz;
++    dest[2][1] = cxSy * sz - sx * cz;
+     dest[2][2] = cx * cy;
+-    dest[2][3] = 0;
++    dest[2][3] = 0.0f;
+ 
+     dest[3][0] = b[0];
+     dest[3][1] = b[1];
+     dest[3][2] = b[2];
+-    dest[3][3] = 1;
++    dest[3][3] = 1.0f;
+ }
+ 
+ /**
+@@ -490,44 +493,30 @@ void mtxf_align_terrain_triangle(Mat4 mtx, Vec3f pos, s16 yaw, f32 radius) {
+  */
+ void mtxf_mul(Mat4 dest, Mat4 a, Mat4 b) {
+     Mat4 temp;
+-    register f32 entry0;
+-    register f32 entry1;
+-    register f32 entry2;
+-
+-    // column 0
+-    entry0 = a[0][0];
+-    entry1 = a[0][1];
+-    entry2 = a[0][2];
+-    temp[0][0] = entry0 * b[0][0] + entry1 * b[1][0] + entry2 * b[2][0];
+-    temp[0][1] = entry0 * b[0][1] + entry1 * b[1][1] + entry2 * b[2][1];
+-    temp[0][2] = entry0 * b[0][2] + entry1 * b[1][2] + entry2 * b[2][2];
+-
+-    // column 1
+-    entry0 = a[1][0];
+-    entry1 = a[1][1];
+-    entry2 = a[1][2];
+-    temp[1][0] = entry0 * b[0][0] + entry1 * b[1][0] + entry2 * b[2][0];
+-    temp[1][1] = entry0 * b[0][1] + entry1 * b[1][1] + entry2 * b[2][1];
+-    temp[1][2] = entry0 * b[0][2] + entry1 * b[1][2] + entry2 * b[2][2];
+-
+-    // column 2
+-    entry0 = a[2][0];
+-    entry1 = a[2][1];
+-    entry2 = a[2][2];
+-    temp[2][0] = entry0 * b[0][0] + entry1 * b[1][0] + entry2 * b[2][0];
+-    temp[2][1] = entry0 * b[0][1] + entry1 * b[1][1] + entry2 * b[2][1];
+-    temp[2][2] = entry0 * b[0][2] + entry1 * b[1][2] + entry2 * b[2][2];
+-
+-    // column 3
+-    entry0 = a[3][0];
+-    entry1 = a[3][1];
+-    entry2 = a[3][2];
+-    temp[3][0] = entry0 * b[0][0] + entry1 * b[1][0] + entry2 * b[2][0] + b[3][0];
+-    temp[3][1] = entry0 * b[0][1] + entry1 * b[1][1] + entry2 * b[2][1] + b[3][1];
+-    temp[3][2] = entry0 * b[0][2] + entry1 * b[1][2] + entry2 * b[2][2] + b[3][2];
+-
+-    temp[0][3] = temp[1][3] = temp[2][3] = 0;
+-    temp[3][3] = 1;
++
++    // column 0 of result = a * column 0 of b
++    temp[0][0] = a[0][0] * b[0][0] + a[0][1] * b[1][0] + a[0][2] * b[2][0];
++    temp[0][1] = a[0][0] * b[0][1] + a[0][1] * b[1][1] + a[0][2] * b[2][1];
++    temp[0][2] = a[0][0] * b[0][2] + a[0][1] * b[1][2] + a[0][2] * b[2][2];
++    temp[0][3] = 0.0f;
++
++    // column 1 of result = a * column 1 of b
++    temp[1][0] = a[1][0] * b[0][0] + a[1][1] * b[1][0] + a[1][2] * b[2][0];
++    temp[1][1] = a[1][0] * b[0][1] + a[1][1] * b[1][1] + a[1][2] * b[2][1];
++    temp[1][2] = a[1][0] * b[0][2] + a[1][1] * b[1][2] + a[1][2] * b[2][2];
++    temp[1][3] = 0.0f;
++
++    // column 2 of result = a * column 2 of b
++    temp[2][0] = a[2][0] * b[0][0] + a[2][1] * b[1][0] + a[2][2] * b[2][0];
++    temp[2][1] = a[2][0] * b[0][1] + a[2][1] * b[1][1] + a[2][2] * b[2][1];
++    temp[2][2] = a[2][0] * b[0][2] + a[2][1] * b[1][2] + a[2][2] * b[2][2];
++    temp[2][3] = 0.0f;
++
++    // column 3 of result = a * column 3 of b + translation
++    temp[3][0] = a[3][0] * b[0][0] + a[3][1] * b[1][0] + a[3][2] * b[2][0] + b[3][0];
++    temp[3][1] = a[3][0] * b[0][1] + a[3][1] * b[1][1] + a[3][2] * b[2][1] + b[3][1];
++    temp[3][2] = a[3][0] * b[0][2] + a[3][1] * b[1][2] + a[3][2] * b[2][2] + b[3][2];
++    temp[3][3] = 1.0f;
+ 
+     mtxf_copy(dest, temp);
+ }
+-- 
+2.43.0
+

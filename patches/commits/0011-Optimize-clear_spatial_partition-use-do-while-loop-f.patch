@@ -1,0 +1,38 @@
+From d35aa0b1c1cc9e98858485367c6e4d3ffc33d2c2 Mon Sep 17 00:00:00 2001
+From: agent <agent@mario-eval>
+Date: Tue, 24 Nov 2026 18:59:08 +0000
+Subject: [PATCH 11/19] Optimize clear_spatial_partition: use do-while loop for
+ better branch prediction, static for inlining (improves
+ clear_dynamic_surfaces on RR)
+
+---
+ src/engine/surface_load.c | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/src/engine/surface_load.c b/src/engine/surface_load.c
+index 14a8f2c..9e55040 100644
+--- a/src/engine/surface_load.c
++++ b/src/engine/surface_load.c
+@@ -76,16 +76,15 @@ static struct Surface *alloc_surface(void) {
+ /**
+  * Iterates through the entire partition, clearing the surfaces.
+  */
+-void clear_spatial_partition(SpatialPartitionCell *cells) {
++static void clear_spatial_partition(SpatialPartitionCell *cells) {
+     register s32 i = NUM_CELLS * NUM_CELLS;
+ 
+-    while (i--) {
++    do {
+         (*cells)[SPATIAL_PARTITION_FLOORS].next = NULL;
+         (*cells)[SPATIAL_PARTITION_CEILS].next = NULL;
+         (*cells)[SPATIAL_PARTITION_WALLS].next = NULL;
+-
+         cells++;
+-    }
++    } while (--i);
+ }
+ 
+ /**
+-- 
+2.43.0
+

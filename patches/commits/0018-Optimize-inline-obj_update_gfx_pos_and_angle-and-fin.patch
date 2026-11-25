@@ -1,0 +1,44 @@
+From 180427ebf951096648edced1dd7ab3dd72c9bb37 Mon Sep 17 00:00:00 2001
+From: agent <agent@mario-eval>
+Date: Tue, 24 Nov 2026 23:50:36 +0000
+Subject: [PATCH 18/19] Optimize: inline obj_update_gfx_pos_and_angle and
+ find_floor_height_and_data
+
+- obj_update_gfx_pos_and_angle: made static inline to eliminate call overhead
+- find_floor_height_and_data: made inline to eliminate call overhead
+
+Speedup: 1.365x -> 1.384x (console geomean). All verification gates pass.
+---
+ src/engine/behavior_script.c   | 2 +-
+ src/engine/surface_collision.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/engine/behavior_script.c b/src/engine/behavior_script.c
+index a3247f6..a1c89c2 100644
+--- a/src/engine/behavior_script.c
++++ b/src/engine/behavior_script.c
+@@ -85,7 +85,7 @@ s32 random_sign(void) {
+ }
+ 
+ // Update an object's graphical position and rotation to match its real position and rotation.
+-void obj_update_gfx_pos_and_angle(struct Object *obj) {
++static inline void obj_update_gfx_pos_and_angle(struct Object *obj) {
+     obj->header.gfx.pos[0] = obj->oPosX;
+     obj->header.gfx.pos[1] = obj->oPosY + obj->oGraphYOffset;
+     obj->header.gfx.pos[2] = obj->oPosZ;
+diff --git a/src/engine/surface_collision.c b/src/engine/surface_collision.c
+index 70bbe32..eb4e7b3 100644
+--- a/src/engine/surface_collision.c
++++ b/src/engine/surface_collision.c
+@@ -391,7 +391,7 @@ UNUSED static u8 unused8038BE50[0x40];
+  * with data about the floor's normal vector and origin offset. Also update
+  * sFloorGeo.
+  */
+-f32 find_floor_height_and_data(f32 xPos, f32 yPos, f32 zPos, struct FloorGeometry **floorGeo) {
++inline f32 find_floor_height_and_data(f32 xPos, f32 yPos, f32 zPos, struct FloorGeometry **floorGeo) {
+     struct Surface *floor;
+     f32 floorHeight = find_floor(xPos, yPos, zPos, &floor);
+ 
+-- 
+2.43.0
+

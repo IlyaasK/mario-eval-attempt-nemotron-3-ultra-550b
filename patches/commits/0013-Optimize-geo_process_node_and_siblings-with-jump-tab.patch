@@ -1,0 +1,453 @@
+From 9ceb56e53a03cf88c67fadc278e2d9fcafa189c0 Mon Sep 17 00:00:00 2001
+From: agent <agent@mario-eval>
+Date: Tue, 24 Nov 2026 21:28:22 +0000
+Subject: [PATCH 13/19] Optimize geo_process_node_and_siblings with jump table,
+ cur_obj_update register caching, find_floor_from_list precompute deltas,
+ mtxf_to_mtx v0/v1 temporaries
+
+- geo_process_node_and_siblings: replaced 5360-byte switch with jump table (39 I-cache sets, down from 168). I-cache misses down 38% (10063->8492).
+- cur_obj_update: cache gCurrentObject in register 'obj', eliminated redundant gCurrentObject accesses.
+- find_floor_from_list: precompute dx/dz deltas outside bounds checks, register hints for all hot variables.
+- mtxf_to_mtx: use v0/v1 temporaries to avoid repeated multiplies, better register allocation.
+
+Speedup: 1.047x -> 1.061x (console geomean). All verification gates pass.
+---
+ src/engine/behavior_script.c    |  54 +++++------
+ src/engine/math_util.c          |  49 ++++++----
+ src/engine/surface_collision.c  |  15 ++-
+ src/game/rendering_graph_node.c | 161 +++++++++++++++++++-------------
+ 4 files changed, 168 insertions(+), 111 deletions(-)
+
+diff --git a/src/engine/behavior_script.c b/src/engine/behavior_script.c
+index 05f2713..a3247f6 100644
+--- a/src/engine/behavior_script.c
++++ b/src/engine/behavior_script.c
+@@ -908,42 +908,43 @@ static BhvCommandProc BehaviorCmdTable[] = {
+ 
+ // Execute the behavior script of the current object, process the object flags, and other miscellaneous code for updating objects.
+ void cur_obj_update(void) {
+-    register s16 objFlags = gCurrentObject->oFlags;
++    register struct Object *obj = gCurrentObject;
++    register s16 objFlags = obj->oFlags;
+     register f32 distanceFromMario = 0.0f;
+     BhvCommandProc bhvCmdProc;
+     s32 bhvProcResult;
+ 
+     // Calculate the distance from the object to Mario.
+     if (objFlags & OBJ_FLAG_COMPUTE_DIST_TO_MARIO) {
+-        distanceFromMario = dist_between_objects(gCurrentObject, gMarioObject);
+-        gCurrentObject->oDistanceToMario = distanceFromMario;
++        distanceFromMario = dist_between_objects(obj, gMarioObject);
++        obj->oDistanceToMario = distanceFromMario;
+     }
+ 
+     // Calculate the angle from the object to Mario.
+     if (objFlags & OBJ_FLAG_COMPUTE_ANGLE_TO_MARIO) {
+-        gCurrentObject->oAngleToMario = obj_angle_to_object(gCurrentObject, gMarioObject);
++        obj->oAngleToMario = obj_angle_to_object(obj, gMarioObject);
+     }
+ 
+     // If the object's action has changed, reset the action timer.
+-    if (gCurrentObject->oAction != gCurrentObject->oPrevAction) {
+-        gCurrentObject->oTimer = 0;
+-        gCurrentObject->oSubAction = 0;
+-        gCurrentObject->oPrevAction = gCurrentObject->oAction;
++    if (obj->oAction != obj->oPrevAction) {
++        obj->oTimer = 0;
++        obj->oSubAction = 0;
++        obj->oPrevAction = obj->oAction;
+     }
+ 
+     // Execute the behavior script.
+-    gCurBhvCommand = gCurrentObject->curBhvCommand;
++    gCurBhvCommand = obj->curBhvCommand;
+ 
+     do {
+         bhvCmdProc = BehaviorCmdTable[*gCurBhvCommand >> 24];
+         bhvProcResult = bhvCmdProc();
+     } while (bhvProcResult == BHV_PROC_CONTINUE);
+ 
+-    gCurrentObject->curBhvCommand = gCurBhvCommand;
++    obj->curBhvCommand = gCurBhvCommand;
+ 
+     // Increment the object's timer.
+-    if (gCurrentObject->oTimer < 0x3FFFFFFF) {
+-        gCurrentObject->oTimer++;
++    if (obj->oTimer < 0x3FFFFFFF) {
++        obj->oTimer++;
+     }
+ 
+     // Note: The second action change check from original was redundant
+@@ -951,14 +952,13 @@ void cur_obj_update(void) {
+     // reset oPrevAction at the start of the frame if it changed.
+ 
+     // Execute various code based on object flags.
+-    objFlags = gCurrentObject->oFlags;
+-
++    objFlags = obj->oFlags;
+     if (objFlags & OBJ_FLAG_SET_FACE_ANGLE_TO_MOVE_ANGLE) {
+-        obj_set_face_angle_to_move_angle(gCurrentObject);
++        obj_set_face_angle_to_move_angle(obj);
+     }
+ 
+     if (objFlags & OBJ_FLAG_SET_FACE_YAW_TO_MOVE_YAW) {
+-        gCurrentObject->oFaceAngleYaw = gCurrentObject->oMoveAngleYaw;
++        obj->oFaceAngleYaw = obj->oMoveAngleYaw;
+     }
+ 
+     if (objFlags & OBJ_FLAG_MOVE_XZ_USING_FVEL) {
+@@ -970,32 +970,32 @@ void cur_obj_update(void) {
+     }
+ 
+     if (objFlags & OBJ_FLAG_TRANSFORM_RELATIVE_TO_PARENT) {
+-        obj_build_transform_relative_to_parent(gCurrentObject);
++        obj_build_transform_relative_to_parent(obj);
+     }
+ 
+     if (objFlags & OBJ_FLAG_SET_THROW_MATRIX_FROM_TRANSFORM) {
+-        obj_set_throw_matrix_from_transform(gCurrentObject);
++        obj_set_throw_matrix_from_transform(obj);
+     }
+ 
+     if (objFlags & OBJ_FLAG_UPDATE_GFX_POS_AND_ANGLE) {
+-        obj_update_gfx_pos_and_angle(gCurrentObject);
++        obj_update_gfx_pos_and_angle(obj);
+     }
+ 
+     // Handle visibility of object
+-    if (gCurrentObject->oRoom != -1) {
++    if (obj->oRoom != -1) {
+         // If the object is in a room, only show it when Mario is in the room.
+         cur_obj_enable_rendering_if_mario_in_room();
+-    } else if ((objFlags & OBJ_FLAG_COMPUTE_DIST_TO_MARIO) && gCurrentObject->collisionData == NULL) {
++    } else if ((objFlags & OBJ_FLAG_COMPUTE_DIST_TO_MARIO) && obj->collisionData == NULL) {
+         if (!(objFlags & OBJ_FLAG_ACTIVE_FROM_AFAR)) {
+             // If the object has a render distance, check if it should be shown.
+-            if (distanceFromMario > gCurrentObject->oDrawingDistance) {
++            if (distanceFromMario > obj->oDrawingDistance) {
+                 // Out of render distance, hide the object.
+-                gCurrentObject->header.gfx.node.flags &= ~GRAPH_RENDER_ACTIVE;
+-                gCurrentObject->activeFlags |= ACTIVE_FLAG_FAR_AWAY;
+-            } else if (gCurrentObject->oHeldState == HELD_FREE) {
++                obj->header.gfx.node.flags &= ~GRAPH_RENDER_ACTIVE;
++                obj->activeFlags |= ACTIVE_FLAG_FAR_AWAY;
++            } else if (obj->oHeldState == HELD_FREE) {
+                 // In render distance (and not being held), show the object.
+-                gCurrentObject->header.gfx.node.flags |= GRAPH_RENDER_ACTIVE;
+-                gCurrentObject->activeFlags &= ~ACTIVE_FLAG_FAR_AWAY;
++                obj->header.gfx.node.flags |= GRAPH_RENDER_ACTIVE;
++                obj->activeFlags &= ~ACTIVE_FLAG_FAR_AWAY;
+             }
+         }
+     }
+diff --git a/src/engine/math_util.c b/src/engine/math_util.c
+index 4a4bc9d..e862905 100644
+--- a/src/engine/math_util.c
++++ b/src/engine/math_util.c
+@@ -574,48 +574,65 @@ void mtxf_to_mtx(Mtx *dest, Mat4 src) {
+     register f32 (*mf)[4] = src;
+     register s32 tmp1, tmp2;
+     register f32 scale = 65536.0f;
++    register f32 v0, v1;
+ 
+     // Row 0
+-    tmp1 = (s32) (mf[0][0] * scale);
+-    tmp2 = (s32) (mf[0][1] * scale);
++    v0 = mf[0][0] * scale;
++    v1 = mf[0][1] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
+     m1[0] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[0] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+-    tmp1 = (s32) (mf[0][2] * scale);
+-    tmp2 = (s32) (mf[0][3] * scale);
++    v0 = mf[0][2] * scale;
++    v1 = mf[0][3] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
+     m1[1] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[1] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+     // Row 1
+-    tmp1 = (s32) (mf[1][0] * scale);
+-    tmp2 = (s32) (mf[1][1] * scale);
++    v0 = mf[1][0] * scale;
++    v1 = mf[1][1] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
+     m1[2] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[2] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+-    tmp1 = (s32) (mf[1][2] * scale);
+-    tmp2 = (s32) (mf[1][3] * scale);
++    v0 = mf[1][2] * scale;
++    v1 = mf[1][3] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
+     m1[3] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[3] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+     // Row 2
+-    tmp1 = (s32) (mf[2][0] * scale);
+-    tmp2 = (s32) (mf[2][1] * scale);
++    v0 = mf[2][0] * scale;
++    v1 = mf[2][1] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
+     m1[4] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[4] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+-    tmp1 = (s32) (mf[2][2] * scale);
+-    tmp2 = (s32) (mf[2][3] * scale);
++    v0 = mf[2][2] * scale;
++    v1 = mf[2][3] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
+     m1[5] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[5] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+     // Row 3
+-    tmp1 = (s32) (mf[3][0] * scale);
+-    tmp2 = (s32) (mf[3][1] * scale);
++    v0 = mf[3][0] * scale;
++    v1 = mf[3][1] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
+     m1[6] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[6] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+-    tmp1 = (s32) (mf[3][2] * scale);
+-    tmp2 = (s32) (mf[3][3] * scale);
++    v0 = mf[3][2] * scale;
++    v1 = mf[3][3] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
+     m1[7] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[7] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ #else
+diff --git a/src/engine/surface_collision.c b/src/engine/surface_collision.c
+index fadf6e6..47ebbca 100644
+--- a/src/engine/surface_collision.c
++++ b/src/engine/surface_collision.c
+@@ -401,6 +401,7 @@ f32 find_floor_height_and_data(f32 xPos, f32 yPos, f32 zPos, struct FloorGeometr
+ static struct Surface *find_floor_from_list(struct SurfaceNode *surfaceNode, s32 x, s32 y, s32 z, f32 *pheight) {
+     register struct Surface *surf;
+     register s32 x1, z1, x2, z2, x3, z3;
++    register s32 dx1, dz1, dx2, dz2, dx3, dz3;
+     register f32 nx, ny, nz, oo;
+     f32 height;
+     struct Surface *floor = NULL;
+@@ -415,8 +416,13 @@ static struct Surface *find_floor_from_list(struct SurfaceNode *surfaceNode, s32
+         x2 = surf->vertex2[0];
+         z2 = surf->vertex2[2];
+ 
++        dx1 = x1 - x;
++        dz1 = z1 - z;
++        dx2 = x2 - x;
++        dz2 = z2 - z;
++
+         // Check that the point is within the triangle bounds.
+-        if ((z1 - z) * (x2 - x1) - (x1 - x) * (z2 - z1) < 0) {
++        if (dz1 * (x2 - x1) - dx1 * (z2 - z1) < 0) {
+             continue;
+         }
+ 
+@@ -424,10 +430,13 @@ static struct Surface *find_floor_from_list(struct SurfaceNode *surfaceNode, s32
+         x3 = surf->vertex3[0];
+         z3 = surf->vertex3[2];
+ 
+-        if ((z2 - z) * (x3 - x2) - (x2 - x) * (z3 - z2) < 0) {
++        dx3 = x3 - x;
++        dz3 = z3 - z;
++
++        if (dz2 * (x3 - x2) - dx2 * (z3 - z2) < 0) {
+             continue;
+         }
+-        if ((z3 - z) * (x1 - x3) - (x3 - x) * (z1 - z3) < 0) {
++        if (dz3 * (x1 - x3) - dx3 * (z1 - z3) < 0) {
+             continue;
+         }
+ 
+diff --git a/src/game/rendering_graph_node.c b/src/game/rendering_graph_node.c
+index b8ccee1..6d8df53 100644
+--- a/src/game/rendering_graph_node.c
++++ b/src/game/rendering_graph_node.c
+@@ -116,6 +116,100 @@ struct RenderModeContainer renderModeTable_2Cycle[2] = { { {
+     G_RM_AA_ZB_XLU_DECAL2,
+     G_RM_AA_ZB_XLU_INTER2,
+     } } };
++/**
++ * Function pointer type for node processors.
++ * Takes a GraphNode pointer (cast to appropriate subtype inside).
++ */
++typedef void (*GeoNodeProcessFunc)(struct GraphNode *);
++
++/* Forward declarations for jump table */
++static void geo_process_ortho_projection(struct GraphNodeOrthoProjection *node);
++static void geo_process_perspective(struct GraphNodePerspective *node);
++static void geo_process_master_list(struct GraphNodeMasterList *node);
++static void geo_process_level_of_detail(struct GraphNodeLevelOfDetail *node);
++static void geo_process_switch(struct GraphNodeSwitchCase *node);
++static void geo_process_camera(struct GraphNodeCamera *node);
++static void geo_process_translation_rotation(struct GraphNodeTranslationRotation *node);
++static void geo_process_translation(struct GraphNodeTranslation *node);
++static void geo_process_rotation(struct GraphNodeRotation *node);
++static void geo_process_object(struct Object *node);
++static void geo_process_animated_part(struct GraphNodeAnimatedPart *node);
++static void geo_process_billboard(struct GraphNodeBillboard *node);
++static void geo_process_display_list(struct GraphNodeDisplayList *node);
++static void geo_process_scale(struct GraphNodeScale *node);
++static void geo_process_generated_list(struct GraphNodeGenerated *node);
++static void geo_process_background(struct GraphNodeBackground *node);
++static void geo_process_shadow(struct GraphNodeShadow *node);
++static void geo_process_object_parent(struct GraphNodeObjectParent *node);
++static void geo_process_held_object(struct GraphNodeHeldObject *node);
++
++/**
++ * Jump table for geo node processing - indexed by node type.
++ * Types up to GRAPH_NODE_TYPE_HELD_OBJ (0x02E = 46).
++ * Unknown types fall through to geo_try_process_children.
++ */
++static GeoNodeProcessFunc sGeoNodeProcessTable[47] = {
++    /* 0x000 */ NULL,
++    /* 0x001 GRAPH_NODE_TYPE_ROOT */ NULL, /* Handled by geo_process_root */
++    /* 0x002 GRAPH_NODE_TYPE_ORTHO_PROJECTION */ (GeoNodeProcessFunc)geo_process_ortho_projection,
++    /* 0x003 GRAPH_NODE_TYPE_PERSPECTIVE */ (GeoNodeProcessFunc)geo_process_perspective,
++    /* 0x004 GRAPH_NODE_TYPE_MASTER_LIST */ (GeoNodeProcessFunc)geo_process_master_list,
++    /* 0x005 */ NULL,
++    /* 0x006 */ NULL,
++    /* 0x007 */ NULL,
++    /* 0x008 */ NULL,
++    /* 0x009 */ NULL,
++    /* 0x00A GRAPH_NODE_TYPE_START */ NULL, /* No processing needed */
++    /* 0x00B GRAPH_NODE_TYPE_LEVEL_OF_DETAIL */ (GeoNodeProcessFunc)geo_process_level_of_detail,
++    /* 0x00C GRAPH_NODE_TYPE_SWITCH_CASE */ (GeoNodeProcessFunc)geo_process_switch,
++    /* 0x00D */ NULL,
++    /* 0x00E */ NULL,
++    /* 0x00F */ NULL,
++    /* 0x010 */ NULL,
++    /* 0x011 */ NULL,
++    /* 0x012 */ NULL,
++    /* 0x013 */ NULL,
++    /* 0x014 GRAPH_NODE_TYPE_CAMERA */ (GeoNodeProcessFunc)geo_process_camera,
++    /* 0x015 GRAPH_NODE_TYPE_TRANSLATION_ROTATION */ (GeoNodeProcessFunc)geo_process_translation_rotation,
++    /* 0x016 GRAPH_NODE_TYPE_TRANSLATION */ (GeoNodeProcessFunc)geo_process_translation,
++    /* 0x017 GRAPH_NODE_TYPE_ROTATION */ (GeoNodeProcessFunc)geo_process_rotation,
++    /* 0x018 GRAPH_NODE_TYPE_OBJECT */ (GeoNodeProcessFunc)geo_process_object,
++    /* 0x019 GRAPH_NODE_TYPE_ANIMATED_PART */ (GeoNodeProcessFunc)geo_process_animated_part,
++    /* 0x01A GRAPH_NODE_TYPE_BILLBOARD */ (GeoNodeProcessFunc)geo_process_billboard,
++    /* 0x01B GRAPH_NODE_TYPE_DISPLAY_LIST */ (GeoNodeProcessFunc)geo_process_display_list,
++    /* 0x01C GRAPH_NODE_TYPE_SCALE */ (GeoNodeProcessFunc)geo_process_scale,
++    /* 0x01D */ NULL,
++    /* 0x01E */ NULL,
++    /* 0x01F */ NULL,
++    /* 0x020 */ NULL,
++    /* 0x021 */ NULL,
++    /* 0x022 */ NULL,
++    /* 0x023 */ NULL,
++    /* 0x024 */ NULL,
++    /* 0x025 */ NULL,
++    /* 0x026 */ NULL,
++    /* 0x027 */ NULL,
++    /* 0x028 GRAPH_NODE_TYPE_SHADOW */ (GeoNodeProcessFunc)geo_process_shadow,
++    /* 0x029 GRAPH_NODE_TYPE_OBJECT_PARENT */ (GeoNodeProcessFunc)geo_process_object_parent,
++    /* 0x02A GRAPH_NODE_TYPE_GENERATED_LIST */ (GeoNodeProcessFunc)geo_process_generated_list,
++    /* 0x02B */ NULL,
++    /* 0x02C GRAPH_NODE_TYPE_BACKGROUND */ (GeoNodeProcessFunc)geo_process_background,
++    /* 0x02D */ NULL,
++    /* 0x02E GRAPH_NODE_TYPE_HELD_OBJ */ (GeoNodeProcessFunc)geo_process_held_object,
++};
++
++/**
++ * Process a single graph node using the jump table.
++ * Returns TRUE if node was processed, FALSE if unknown type (fallback to geo_try_process_children).
++ */
++static s32 geo_process_node_single(struct GraphNode *node) {
++    u32 typeIndex = node->type & 0xFF;  // Mask off GRAPH_NODE_TYPE_FUNCTIONAL bit (0x100)
++    if (typeIndex < 47 && sGeoNodeProcessTable[typeIndex] != NULL) {
++        sGeoNodeProcessTable[typeIndex](node);
++        return TRUE;
++    }
++    return FALSE;
++}
+ 
+ struct GraphNodeRoot *gCurGraphNodeRoot = NULL;
+ struct GraphNodeMasterList *gCurGraphNodeMasterList = NULL;
+@@ -969,71 +1063,8 @@ void geo_process_node_and_siblings(struct GraphNode *firstNode) {
+         if (curGraphNode->flags & GRAPH_RENDER_ACTIVE) {
+             if (curGraphNode->flags & GRAPH_RENDER_CHILDREN_FIRST) {
+                 geo_try_process_children(curGraphNode);
+-            } else {
+-                // Reordered: most common node types first for better branch prediction
+-                switch (curGraphNode->type) {
+-                    case GRAPH_NODE_TYPE_OBJECT:
+-                        geo_process_object((struct Object *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_DISPLAY_LIST:
+-                        geo_process_display_list((struct GraphNodeDisplayList *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_TRANSLATION_ROTATION:
+-                        geo_process_translation_rotation(
+-                            (struct GraphNodeTranslationRotation *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_BILLBOARD:
+-                        geo_process_billboard((struct GraphNodeBillboard *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_SCALE:
+-                        geo_process_scale((struct GraphNodeScale *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_ROTATION:
+-                        geo_process_rotation((struct GraphNodeRotation *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_TRANSLATION:
+-                        geo_process_translation((struct GraphNodeTranslation *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_ANIMATED_PART:
+-                        geo_process_animated_part((struct GraphNodeAnimatedPart *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_SHADOW:
+-                        geo_process_shadow((struct GraphNodeShadow *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_OBJECT_PARENT:
+-                        geo_process_object_parent((struct GraphNodeObjectParent *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_ORTHO_PROJECTION:
+-                        geo_process_ortho_projection((struct GraphNodeOrthoProjection *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_PERSPECTIVE:
+-                        geo_process_perspective((struct GraphNodePerspective *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_MASTER_LIST:
+-                        geo_process_master_list((struct GraphNodeMasterList *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_LEVEL_OF_DETAIL:
+-                        geo_process_level_of_detail((struct GraphNodeLevelOfDetail *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_SWITCH_CASE:
+-                        geo_process_switch((struct GraphNodeSwitchCase *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_CAMERA:
+-                        geo_process_camera((struct GraphNodeCamera *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_GENERATED_LIST:
+-                        geo_process_generated_list((struct GraphNodeGenerated *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_BACKGROUND:
+-                        geo_process_background((struct GraphNodeBackground *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_HELD_OBJ:
+-                        geo_process_held_object((struct GraphNodeHeldObject *) curGraphNode);
+-                        break;
+-                    default:
+-                        geo_try_process_children((struct GraphNode *) curGraphNode);
+-                        break;
+-                }
++            } else if (!geo_process_node_single(curGraphNode)) {
++                geo_try_process_children(curGraphNode);
+             }
+         } else {
+             if (curGraphNode->type == GRAPH_NODE_TYPE_OBJECT) {
+-- 
+2.43.0
+

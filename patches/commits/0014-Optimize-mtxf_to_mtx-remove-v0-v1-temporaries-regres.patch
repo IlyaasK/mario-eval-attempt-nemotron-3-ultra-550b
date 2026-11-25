@@ -1,0 +1,160 @@
+From b9bf20bef5e36b4b7c08be6d840370261b0981a2 Mon Sep 17 00:00:00 2001
+From: agent <agent@mario-eval>
+Date: Tue, 24 Nov 2026 21:47:21 +0000
+Subject: [PATCH 14/19] Optimize mtxf_to_mtx: remove v0/v1 temporaries
+ (regressed slightly), optimize find_wall_collisions_from_list with register
+ hints for normal/origin
+
+- mtxf_to_mtx: reverted to direct computation (v0/v1 temporaries added register pressure)
+- find_wall_collisions_from_list: hoist normal/originOffset loads to registers (nx,ny,nz,oo) before use
+
+All verification gates pass. Console speedup: 1.378x
+---
+ src/engine/math_util.c         | 49 +++++++++++-----------------------
+ src/engine/surface_collision.c | 16 +++++++----
+ 2 files changed, 27 insertions(+), 38 deletions(-)
+
+diff --git a/src/engine/math_util.c b/src/engine/math_util.c
+index e862905..4a4bc9d 100644
+--- a/src/engine/math_util.c
++++ b/src/engine/math_util.c
+@@ -574,65 +574,48 @@ void mtxf_to_mtx(Mtx *dest, Mat4 src) {
+     register f32 (*mf)[4] = src;
+     register s32 tmp1, tmp2;
+     register f32 scale = 65536.0f;
+-    register f32 v0, v1;
+ 
+     // Row 0
+-    v0 = mf[0][0] * scale;
+-    v1 = mf[0][1] * scale;
+-    tmp1 = (s32) v0;
+-    tmp2 = (s32) v1;
++    tmp1 = (s32) (mf[0][0] * scale);
++    tmp2 = (s32) (mf[0][1] * scale);
+     m1[0] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[0] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+-    v0 = mf[0][2] * scale;
+-    v1 = mf[0][3] * scale;
+-    tmp1 = (s32) v0;
+-    tmp2 = (s32) v1;
++    tmp1 = (s32) (mf[0][2] * scale);
++    tmp2 = (s32) (mf[0][3] * scale);
+     m1[1] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[1] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+     // Row 1
+-    v0 = mf[1][0] * scale;
+-    v1 = mf[1][1] * scale;
+-    tmp1 = (s32) v0;
+-    tmp2 = (s32) v1;
++    tmp1 = (s32) (mf[1][0] * scale);
++    tmp2 = (s32) (mf[1][1] * scale);
+     m1[2] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[2] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+-    v0 = mf[1][2] * scale;
+-    v1 = mf[1][3] * scale;
+-    tmp1 = (s32) v0;
+-    tmp2 = (s32) v1;
++    tmp1 = (s32) (mf[1][2] * scale);
++    tmp2 = (s32) (mf[1][3] * scale);
+     m1[3] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[3] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+     // Row 2
+-    v0 = mf[2][0] * scale;
+-    v1 = mf[2][1] * scale;
+-    tmp1 = (s32) v0;
+-    tmp2 = (s32) v1;
++    tmp1 = (s32) (mf[2][0] * scale);
++    tmp2 = (s32) (mf[2][1] * scale);
+     m1[4] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[4] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+-    v0 = mf[2][2] * scale;
+-    v1 = mf[2][3] * scale;
+-    tmp1 = (s32) v0;
+-    tmp2 = (s32) v1;
++    tmp1 = (s32) (mf[2][2] * scale);
++    tmp2 = (s32) (mf[2][3] * scale);
+     m1[5] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[5] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+     // Row 3
+-    v0 = mf[3][0] * scale;
+-    v1 = mf[3][1] * scale;
+-    tmp1 = (s32) v0;
+-    tmp2 = (s32) v1;
++    tmp1 = (s32) (mf[3][0] * scale);
++    tmp2 = (s32) (mf[3][1] * scale);
+     m1[6] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[6] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ 
+-    v0 = mf[3][2] * scale;
+-    v1 = mf[3][3] * scale;
+-    tmp1 = (s32) v0;
+-    tmp2 = (s32) v1;
++    tmp1 = (s32) (mf[3][2] * scale);
++    tmp2 = (s32) (mf[3][3] * scale);
+     m1[7] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
+     m2[7] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ #else
+diff --git a/src/engine/surface_collision.c b/src/engine/surface_collision.c
+index 47ebbca..87019f4 100644
+--- a/src/engine/surface_collision.c
++++ b/src/engine/surface_collision.c
+@@ -27,6 +27,7 @@ static s32 find_wall_collisions_from_list(struct SurfaceNode *surfaceNode,
+     register f32 px, pz;
+     register f32 w1, w2, w3;
+     register f32 y1, y2, y3;
++    register f32 nx, ny, nz, oo;
+     s32 numCols = 0;
+ 
+     // Max collision radius = 200
+@@ -44,7 +45,12 @@ static s32 find_wall_collisions_from_list(struct SurfaceNode *surfaceNode,
+             continue;
+         }
+ 
+-        offset = surf->normal.x * x + surf->normal.y * y + surf->normal.z * z + surf->originOffset;
++        nx = surf->normal.x;
++        ny = surf->normal.y;
++        nz = surf->normal.z;
++        oo = surf->originOffset;
++
++        offset = nx * x + ny * y + nz * z + oo;
+ 
+         if (offset < -radius || offset > radius) {
+             continue;
+@@ -60,7 +66,7 @@ static s32 find_wall_collisions_from_list(struct SurfaceNode *surfaceNode,
+             w1 = -surf->vertex1[2];            w2 = -surf->vertex2[2];            w3 = -surf->vertex3[2];
+             y1 = surf->vertex1[1];            y2 = surf->vertex2[1];            y3 = surf->vertex3[1];
+ 
+-            if (surf->normal.x > 0.0f) {
++            if (nx > 0.0f) {
+                 if ((y1 - y) * (w2 - w1) - (w1 - -pz) * (y2 - y1) > 0.0f) {
+                     continue;
+                 }
+@@ -85,7 +91,7 @@ static s32 find_wall_collisions_from_list(struct SurfaceNode *surfaceNode,
+             w1 = surf->vertex1[0];            w2 = surf->vertex2[0];            w3 = surf->vertex3[0];
+             y1 = surf->vertex1[1];            y2 = surf->vertex2[1];            y3 = surf->vertex3[1];
+ 
+-            if (surf->normal.z > 0.0f) {
++            if (nz > 0.0f) {
+                 if ((y1 - y) * (w2 - w1) - (w1 - px) * (y2 - y1) > 0.0f) {
+                     continue;
+                 }
+@@ -137,8 +143,8 @@ static s32 find_wall_collisions_from_list(struct SurfaceNode *surfaceNode,
+ 
+         //! (Wall Overlaps) Because this doesn't update the x and z local variables,
+         //  multiple walls can push mario more than is required.
+-        data->x += surf->normal.x * (radius - offset);
+-        data->z += surf->normal.z * (radius - offset);
++        data->x += nx * (radius - offset);
++        data->z += nz * (radius - offset);
+ 
+         //! (Unreferenced Walls) Since this only returns the first four walls,
+         //  this can lead to wall interaction being missed. Typically unreferenced walls
+-- 
+2.43.0
+

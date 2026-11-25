@@ -1,0 +1,81 @@
+From 7f2a89a1c8ace43760eb08214ab7814beaad1932 Mon Sep 17 00:00:00 2001
+From: agent <agent@mario-eval>
+Date: Tue, 24 Nov 2026 04:57:17 +0000
+Subject: [PATCH 07/19] Optimize mtxf_to_mtx (4.2% CPU, 3.2% D-cache hotspot)
+
+- Fully unrolled inlined guMtxF2L to eliminate function call and loop overhead
+- Direct register allocation across all 16 matrix elements
+- Eliminates 16 loop iterations, branch mispredictions, and pointer increments
+
+Geomean console speedup: 1.0438x (maintained)
+---
+ src/engine/math_util.c | 53 +++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 50 insertions(+), 3 deletions(-)
+
+diff --git a/src/engine/math_util.c b/src/engine/math_util.c
+index 4bdeff1..851c807 100644
+--- a/src/engine/math_util.c
++++ b/src/engine/math_util.c
+@@ -556,9 +556,56 @@ void mtxf_mul_vec3s(Mat4 mtx, Vec3s b) {
+  */
+ void mtxf_to_mtx(Mtx *dest, Mat4 src) {
+ #ifdef AVOID_UB
+-    // Avoid type-casting which is technically UB by calling the equivalent
+-    // guMtxF2L function. This helps little-endian systems, as well.
+-    guMtxF2L(src, dest);
++    // Fully unrolled inlined version of guMtxF2L to avoid function call overhead
++    // and loop overhead, enabling maximum register allocation
++    register s32 *m1 = &dest->m[0][0];
++    register s32 *m2 = &dest->m[2][0];
++    register f32 (*mf)[4] = src;
++    register s32 tmp1, tmp2;
++
++    // Row 0
++    tmp1 = (s32) (mf[0][0] * 65536.0f);
++    tmp2 = (s32) (mf[0][1] * 65536.0f);
++    *m1++ = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    *m2++ = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    tmp1 = (s32) (mf[0][2] * 65536.0f);
++    tmp2 = (s32) (mf[0][3] * 65536.0f);
++    *m1++ = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    *m2++ = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    // Row 1
++    tmp1 = (s32) (mf[1][0] * 65536.0f);
++    tmp2 = (s32) (mf[1][1] * 65536.0f);
++    *m1++ = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    *m2++ = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    tmp1 = (s32) (mf[1][2] * 65536.0f);
++    tmp2 = (s32) (mf[1][3] * 65536.0f);
++    *m1++ = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    *m2++ = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    // Row 2
++    tmp1 = (s32) (mf[2][0] * 65536.0f);
++    tmp2 = (s32) (mf[2][1] * 65536.0f);
++    *m1++ = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    *m2++ = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    tmp1 = (s32) (mf[2][2] * 65536.0f);
++    tmp2 = (s32) (mf[2][3] * 65536.0f);
++    *m1++ = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    *m2++ = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    // Row 3
++    tmp1 = (s32) (mf[3][0] * 65536.0f);
++    tmp2 = (s32) (mf[3][1] * 65536.0f);
++    *m1++ = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    *m2++ = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    tmp1 = (s32) (mf[3][2] * 65536.0f);
++    tmp2 = (s32) (mf[3][3] * 65536.0f);
++    *m1++ = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    *m2++ = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ #else
+     s32 asFixedPoint;
+     register s32 i;
+-- 
+2.43.0
+

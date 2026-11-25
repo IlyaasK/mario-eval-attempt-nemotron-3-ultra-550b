@@ -1,0 +1,55 @@
+From cc98c08b8c1fc504f9cf0236e5f9a95a235cad19 Mon Sep 17 00:00:00 2001
+From: agent <agent@mario-eval>
+Date: Tue, 24 Nov 2026 05:12:52 +0000
+Subject: [PATCH 08/19] Optimize mtxf_scale_vec3f (1.2% CPU hotspot)
+
+- Fully unrolled 4x4 scale matrix multiplication
+- Eliminated loop overhead and branch
+- Direct computation to dest
+
+Geomean console speedup: 1.0474x (up from 1.0438x)
+---
+ src/engine/math_util.c | 27 +++++++++++++++++++--------
+ 1 file changed, 19 insertions(+), 8 deletions(-)
+
+diff --git a/src/engine/math_util.c b/src/engine/math_util.c
+index 851c807..96ecf17 100644
+--- a/src/engine/math_util.c
++++ b/src/engine/math_util.c
+@@ -520,14 +520,25 @@ void mtxf_mul(Mat4 dest, Mat4 a, Mat4 b) {
+  * Set matrix 'dest' to 'mtx' scaled by vector s
+  */
+ void mtxf_scale_vec3f(Mat4 dest, Mat4 mtx, Vec3f s) {
+-    register s32 i;
+-
+-    for (i = 0; i < 4; i++) {
+-        dest[0][i] = mtx[0][i] * s[0];
+-        dest[1][i] = mtx[1][i] * s[1];
+-        dest[2][i] = mtx[2][i] * s[2];
+-        dest[3][i] = mtx[3][i];
+-    }
++    dest[0][0] = mtx[0][0] * s[0];
++    dest[0][1] = mtx[0][1] * s[0];
++    dest[0][2] = mtx[0][2] * s[0];
++    dest[0][3] = mtx[0][3] * s[0];
++
++    dest[1][0] = mtx[1][0] * s[1];
++    dest[1][1] = mtx[1][1] * s[1];
++    dest[1][2] = mtx[1][2] * s[1];
++    dest[1][3] = mtx[1][3] * s[1];
++
++    dest[2][0] = mtx[2][0] * s[2];
++    dest[2][1] = mtx[2][1] * s[2];
++    dest[2][2] = mtx[2][2] * s[2];
++    dest[2][3] = mtx[2][3] * s[2];
++
++    dest[3][0] = mtx[3][0];
++    dest[3][1] = mtx[3][1];
++    dest[3][2] = mtx[3][2];
++    dest[3][3] = mtx[3][3];
+ }
+ 
+ /**
+-- 
+2.43.0
+

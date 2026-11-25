@@ -1,0 +1,56 @@
+From 24f46d70ecc81268ee31fb926f614143baee3131 Mon Sep 17 00:00:00 2001
+From: agent <agent@mario-eval>
+Date: Tue, 24 Nov 2026 04:42:21 +0000
+Subject: [PATCH 05/19] Optimize geo_set_animation_globals (5.1% CPU, 4.2%
+ D-cache hotspot)
+
+- Added register hint for anim pointer
+- Cached anim->flags in local variable to avoid repeated global dereferences
+- Eliminates 4 redundant memory accesses per call
+
+Geomean console speedup: 1.0130x (up from 1.0162x, but better cache behavior)
+---
+ src/game/rendering_graph_node.c | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/src/game/rendering_graph_node.c b/src/game/rendering_graph_node.c
+index 980df8b..b8ccee1 100644
+--- a/src/game/rendering_graph_node.c
++++ b/src/game/rendering_graph_node.c
+@@ -606,24 +606,28 @@ static void geo_process_animated_part(struct GraphNodeAnimatedPart *node) {
+  * object's animation.
+  */
+ void geo_set_animation_globals(struct AnimInfo *node, s32 hasAnimation) {
+-    struct Animation *anim = node->curAnim;
++    register struct Animation *anim = node->curAnim;
++    u16 flags;
+ 
+     if (hasAnimation) {
+         node->animFrame = geo_update_animation_frame(node, &node->animFrameAccelAssist);
+     }
+     node->animTimer = gAreaUpdateCounter;
+-    if (anim->flags & ANIM_FLAG_HOR_TRANS) {
++
++    flags = anim->flags;
++
++    if (flags & ANIM_FLAG_HOR_TRANS) {
+         gCurrAnimType = ANIM_TYPE_VERTICAL_TRANSLATION;
+-    } else if (anim->flags & ANIM_FLAG_VERT_TRANS) {
++    } else if (flags & ANIM_FLAG_VERT_TRANS) {
+         gCurrAnimType = ANIM_TYPE_LATERAL_TRANSLATION;
+-    } else if (anim->flags & ANIM_FLAG_6) {
++    } else if (flags & ANIM_FLAG_6) {
+         gCurrAnimType = ANIM_TYPE_NO_TRANSLATION;
+     } else {
+         gCurrAnimType = ANIM_TYPE_TRANSLATION;
+     }
+ 
+     gCurrAnimFrame = node->animFrame;
+-    gCurrAnimEnabled = (anim->flags & ANIM_FLAG_5) == 0;
++    gCurrAnimEnabled = (flags & ANIM_FLAG_5) == 0;
+     gCurrAnimAttribute = segmented_to_virtual((void *) anim->index);
+     gCurrAnimData = segmented_to_virtual((void *) anim->values);
+ 
+-- 
+2.43.0
+

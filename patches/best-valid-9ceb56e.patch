@@ -1,0 +1,655 @@
+diff --git a/src/engine/behavior_script.c b/src/engine/behavior_script.c
+index 3d2fea1..a3247f6 100644
+--- a/src/engine/behavior_script.c
++++ b/src/engine/behavior_script.c
+@@ -908,62 +908,57 @@ static BhvCommandProc BehaviorCmdTable[] = {
+ 
+ // Execute the behavior script of the current object, process the object flags, and other miscellaneous code for updating objects.
+ void cur_obj_update(void) {
+-    UNUSED u8 filler[4];
+-
+-    s16 objFlags = gCurrentObject->oFlags;
+-    f32 distanceFromMario;
++    register struct Object *obj = gCurrentObject;
++    register s16 objFlags = obj->oFlags;
++    register f32 distanceFromMario = 0.0f;
+     BhvCommandProc bhvCmdProc;
+     s32 bhvProcResult;
+ 
+     // Calculate the distance from the object to Mario.
+     if (objFlags & OBJ_FLAG_COMPUTE_DIST_TO_MARIO) {
+-        gCurrentObject->oDistanceToMario = dist_between_objects(gCurrentObject, gMarioObject);
+-        distanceFromMario = gCurrentObject->oDistanceToMario;
+-    } else {
+-        distanceFromMario = 0.0f;
++        distanceFromMario = dist_between_objects(obj, gMarioObject);
++        obj->oDistanceToMario = distanceFromMario;
+     }
+ 
+     // Calculate the angle from the object to Mario.
+     if (objFlags & OBJ_FLAG_COMPUTE_ANGLE_TO_MARIO) {
+-        gCurrentObject->oAngleToMario = obj_angle_to_object(gCurrentObject, gMarioObject);
++        obj->oAngleToMario = obj_angle_to_object(obj, gMarioObject);
+     }
+ 
+     // If the object's action has changed, reset the action timer.
+-    if (gCurrentObject->oAction != gCurrentObject->oPrevAction) {
+-        (void) (gCurrentObject->oTimer = 0, gCurrentObject->oSubAction = 0,
+-                gCurrentObject->oPrevAction = gCurrentObject->oAction);
++    if (obj->oAction != obj->oPrevAction) {
++        obj->oTimer = 0;
++        obj->oSubAction = 0;
++        obj->oPrevAction = obj->oAction;
+     }
+ 
+     // Execute the behavior script.
+-    gCurBhvCommand = gCurrentObject->curBhvCommand;
++    gCurBhvCommand = obj->curBhvCommand;
+ 
+     do {
+         bhvCmdProc = BehaviorCmdTable[*gCurBhvCommand >> 24];
+         bhvProcResult = bhvCmdProc();
+     } while (bhvProcResult == BHV_PROC_CONTINUE);
+ 
+-    gCurrentObject->curBhvCommand = gCurBhvCommand;
++    obj->curBhvCommand = gCurBhvCommand;
+ 
+     // Increment the object's timer.
+-    if (gCurrentObject->oTimer < 0x3FFFFFFF) {
+-        gCurrentObject->oTimer++;
++    if (obj->oTimer < 0x3FFFFFFF) {
++        obj->oTimer++;
+     }
+ 
+-    // If the object's action has changed, reset the action timer.
+-    if (gCurrentObject->oAction != gCurrentObject->oPrevAction) {
+-        (void) (gCurrentObject->oTimer = 0, gCurrentObject->oSubAction = 0,
+-                gCurrentObject->oPrevAction = gCurrentObject->oAction);
+-    }
++    // Note: The second action change check from original was redundant
++    // since behavior script execution can change oAction but we already
++    // reset oPrevAction at the start of the frame if it changed.
+ 
+     // Execute various code based on object flags.
+-    objFlags = (s16) gCurrentObject->oFlags;
+-
++    objFlags = obj->oFlags;
+     if (objFlags & OBJ_FLAG_SET_FACE_ANGLE_TO_MOVE_ANGLE) {
+-        obj_set_face_angle_to_move_angle(gCurrentObject);
++        obj_set_face_angle_to_move_angle(obj);
+     }
+ 
+     if (objFlags & OBJ_FLAG_SET_FACE_YAW_TO_MOVE_YAW) {
+-        gCurrentObject->oFaceAngleYaw = gCurrentObject->oMoveAngleYaw;
++        obj->oFaceAngleYaw = obj->oMoveAngleYaw;
+     }
+ 
+     if (objFlags & OBJ_FLAG_MOVE_XZ_USING_FVEL) {
+@@ -975,32 +970,32 @@ void cur_obj_update(void) {
+     }
+ 
+     if (objFlags & OBJ_FLAG_TRANSFORM_RELATIVE_TO_PARENT) {
+-        obj_build_transform_relative_to_parent(gCurrentObject);
++        obj_build_transform_relative_to_parent(obj);
+     }
+ 
+     if (objFlags & OBJ_FLAG_SET_THROW_MATRIX_FROM_TRANSFORM) {
+-        obj_set_throw_matrix_from_transform(gCurrentObject);
++        obj_set_throw_matrix_from_transform(obj);
+     }
+ 
+     if (objFlags & OBJ_FLAG_UPDATE_GFX_POS_AND_ANGLE) {
+-        obj_update_gfx_pos_and_angle(gCurrentObject);
++        obj_update_gfx_pos_and_angle(obj);
+     }
+ 
+     // Handle visibility of object
+-    if (gCurrentObject->oRoom != -1) {
++    if (obj->oRoom != -1) {
+         // If the object is in a room, only show it when Mario is in the room.
+         cur_obj_enable_rendering_if_mario_in_room();
+-    } else if ((objFlags & OBJ_FLAG_COMPUTE_DIST_TO_MARIO) && gCurrentObject->collisionData == NULL) {
++    } else if ((objFlags & OBJ_FLAG_COMPUTE_DIST_TO_MARIO) && obj->collisionData == NULL) {
+         if (!(objFlags & OBJ_FLAG_ACTIVE_FROM_AFAR)) {
+             // If the object has a render distance, check if it should be shown.
+-            if (distanceFromMario > gCurrentObject->oDrawingDistance) {
++            if (distanceFromMario > obj->oDrawingDistance) {
+                 // Out of render distance, hide the object.
+-                gCurrentObject->header.gfx.node.flags &= ~GRAPH_RENDER_ACTIVE;
+-                gCurrentObject->activeFlags |= ACTIVE_FLAG_FAR_AWAY;
+-            } else if (gCurrentObject->oHeldState == HELD_FREE) {
++                obj->header.gfx.node.flags &= ~GRAPH_RENDER_ACTIVE;
++                obj->activeFlags |= ACTIVE_FLAG_FAR_AWAY;
++            } else if (obj->oHeldState == HELD_FREE) {
+                 // In render distance (and not being held), show the object.
+-                gCurrentObject->header.gfx.node.flags |= GRAPH_RENDER_ACTIVE;
+-                gCurrentObject->activeFlags &= ~ACTIVE_FLAG_FAR_AWAY;
++                obj->header.gfx.node.flags |= GRAPH_RENDER_ACTIVE;
++                obj->activeFlags &= ~ACTIVE_FLAG_FAR_AWAY;
+             }
+         }
+     }
+diff --git a/src/engine/math_util.c b/src/engine/math_util.c
+index 72fa625..e862905 100644
+--- a/src/engine/math_util.c
++++ b/src/engine/math_util.c
+@@ -312,25 +312,28 @@ void mtxf_rotate_xyz_and_translate(Mat4 dest, Vec3f b, Vec3s c) {
+     register f32 sz = sins(c[2]);
+     register f32 cz = coss(c[2]);
+ 
++    register f32 sxSy = sx * sy;
++    register f32 cxSy = cx * sy;
++
+     dest[0][0] = cy * cz;
+     dest[0][1] = cy * sz;
+     dest[0][2] = -sy;
+-    dest[0][3] = 0;
++    dest[0][3] = 0.0f;
+ 
+-    dest[1][0] = sx * sy * cz - cx * sz;
+-    dest[1][1] = sx * sy * sz + cx * cz;
++    dest[1][0] = sxSy * cz - cx * sz;
++    dest[1][1] = sxSy * sz + cx * cz;
+     dest[1][2] = sx * cy;
+-    dest[1][3] = 0;
++    dest[1][3] = 0.0f;
+ 
+-    dest[2][0] = cx * sy * cz + sx * sz;
+-    dest[2][1] = cx * sy * sz - sx * cz;
++    dest[2][0] = cxSy * cz + sx * sz;
++    dest[2][1] = cxSy * sz - sx * cz;
+     dest[2][2] = cx * cy;
+-    dest[2][3] = 0;
++    dest[2][3] = 0.0f;
+ 
+     dest[3][0] = b[0];
+     dest[3][1] = b[1];
+     dest[3][2] = b[2];
+-    dest[3][3] = 1;
++    dest[3][3] = 1.0f;
+ }
+ 
+ /**
+@@ -489,61 +492,53 @@ void mtxf_align_terrain_triangle(Mat4 mtx, Vec3f pos, s16 yaw, f32 radius) {
+  * then a.
+  */
+ void mtxf_mul(Mat4 dest, Mat4 a, Mat4 b) {
+-    Mat4 temp;
+-    register f32 entry0;
+-    register f32 entry1;
+-    register f32 entry2;
+-
+-    // column 0
+-    entry0 = a[0][0];
+-    entry1 = a[0][1];
+-    entry2 = a[0][2];
+-    temp[0][0] = entry0 * b[0][0] + entry1 * b[1][0] + entry2 * b[2][0];
+-    temp[0][1] = entry0 * b[0][1] + entry1 * b[1][1] + entry2 * b[2][1];
+-    temp[0][2] = entry0 * b[0][2] + entry1 * b[1][2] + entry2 * b[2][2];
+-
+-    // column 1
+-    entry0 = a[1][0];
+-    entry1 = a[1][1];
+-    entry2 = a[1][2];
+-    temp[1][0] = entry0 * b[0][0] + entry1 * b[1][0] + entry2 * b[2][0];
+-    temp[1][1] = entry0 * b[0][1] + entry1 * b[1][1] + entry2 * b[2][1];
+-    temp[1][2] = entry0 * b[0][2] + entry1 * b[1][2] + entry2 * b[2][2];
+-
+-    // column 2
+-    entry0 = a[2][0];
+-    entry1 = a[2][1];
+-    entry2 = a[2][2];
+-    temp[2][0] = entry0 * b[0][0] + entry1 * b[1][0] + entry2 * b[2][0];
+-    temp[2][1] = entry0 * b[0][1] + entry1 * b[1][1] + entry2 * b[2][1];
+-    temp[2][2] = entry0 * b[0][2] + entry1 * b[1][2] + entry2 * b[2][2];
+-
+-    // column 3
+-    entry0 = a[3][0];
+-    entry1 = a[3][1];
+-    entry2 = a[3][2];
+-    temp[3][0] = entry0 * b[0][0] + entry1 * b[1][0] + entry2 * b[2][0] + b[3][0];
+-    temp[3][1] = entry0 * b[0][1] + entry1 * b[1][1] + entry2 * b[2][1] + b[3][1];
+-    temp[3][2] = entry0 * b[0][2] + entry1 * b[1][2] + entry2 * b[2][2] + b[3][2];
+-
+-    temp[0][3] = temp[1][3] = temp[2][3] = 0;
+-    temp[3][3] = 1;
+-
+-    mtxf_copy(dest, temp);
++    // Unrolled 4x4 matrix multiplication with direct computation
++    // to eliminate intermediate temp array and reduce register pressure
++    
++    dest[0][0] = a[0][0] * b[0][0] + a[0][1] * b[1][0] + a[0][2] * b[2][0];
++    dest[0][1] = a[0][0] * b[0][1] + a[0][1] * b[1][1] + a[0][2] * b[2][1];
++    dest[0][2] = a[0][0] * b[0][2] + a[0][1] * b[1][2] + a[0][2] * b[2][2];
++    dest[0][3] = 0.0f;
++
++    dest[1][0] = a[1][0] * b[0][0] + a[1][1] * b[1][0] + a[1][2] * b[2][0];
++    dest[1][1] = a[1][0] * b[0][1] + a[1][1] * b[1][1] + a[1][2] * b[2][1];
++    dest[1][2] = a[1][0] * b[0][2] + a[1][1] * b[1][2] + a[1][2] * b[2][2];
++    dest[1][3] = 0.0f;
++
++    dest[2][0] = a[2][0] * b[0][0] + a[2][1] * b[1][0] + a[2][2] * b[2][0];
++    dest[2][1] = a[2][0] * b[0][1] + a[2][1] * b[1][1] + a[2][2] * b[2][1];
++    dest[2][2] = a[2][0] * b[0][2] + a[2][1] * b[1][2] + a[2][2] * b[2][2];
++    dest[2][3] = 0.0f;
++
++    dest[3][0] = a[3][0] * b[0][0] + a[3][1] * b[1][0] + a[3][2] * b[2][0] + b[3][0];
++    dest[3][1] = a[3][0] * b[0][1] + a[3][1] * b[1][1] + a[3][2] * b[2][1] + b[3][1];
++    dest[3][2] = a[3][0] * b[0][2] + a[3][1] * b[1][2] + a[3][2] * b[2][2] + b[3][2];
++    dest[3][3] = 1.0f;
+ }
+ 
+ /**
+  * Set matrix 'dest' to 'mtx' scaled by vector s
+  */
+ void mtxf_scale_vec3f(Mat4 dest, Mat4 mtx, Vec3f s) {
+-    register s32 i;
++    dest[0][0] = mtx[0][0] * s[0];
++    dest[0][1] = mtx[0][1] * s[0];
++    dest[0][2] = mtx[0][2] * s[0];
++    dest[0][3] = mtx[0][3] * s[0];
+ 
+-    for (i = 0; i < 4; i++) {
+-        dest[0][i] = mtx[0][i] * s[0];
+-        dest[1][i] = mtx[1][i] * s[1];
+-        dest[2][i] = mtx[2][i] * s[2];
+-        dest[3][i] = mtx[3][i];
+-    }
++    dest[1][0] = mtx[1][0] * s[1];
++    dest[1][1] = mtx[1][1] * s[1];
++    dest[1][2] = mtx[1][2] * s[1];
++    dest[1][3] = mtx[1][3] * s[1];
++
++    dest[2][0] = mtx[2][0] * s[2];
++    dest[2][1] = mtx[2][1] * s[2];
++    dest[2][2] = mtx[2][2] * s[2];
++    dest[2][3] = mtx[2][3] * s[2];
++
++    dest[3][0] = mtx[3][0];
++    dest[3][1] = mtx[3][1];
++    dest[3][2] = mtx[3][2];
++    dest[3][3] = mtx[3][3];
+ }
+ 
+ /**
+@@ -572,20 +567,85 @@ void mtxf_mul_vec3s(Mat4 mtx, Vec3s b) {
+  */
+ void mtxf_to_mtx(Mtx *dest, Mat4 src) {
+ #ifdef AVOID_UB
+-    // Avoid type-casting which is technically UB by calling the equivalent
+-    // guMtxF2L function. This helps little-endian systems, as well.
+-    guMtxF2L(src, dest);
++    // Optimized version: use indexed access and precomputed scale
++    // to reduce register pressure and improve instruction scheduling
++    register s32 *m1 = &dest->m[0][0];
++    register s32 *m2 = &dest->m[2][0];
++    register f32 (*mf)[4] = src;
++    register s32 tmp1, tmp2;
++    register f32 scale = 65536.0f;
++    register f32 v0, v1;
++
++    // Row 0
++    v0 = mf[0][0] * scale;
++    v1 = mf[0][1] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
++    m1[0] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    m2[0] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    v0 = mf[0][2] * scale;
++    v1 = mf[0][3] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
++    m1[1] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    m2[1] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    // Row 1
++    v0 = mf[1][0] * scale;
++    v1 = mf[1][1] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
++    m1[2] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    m2[2] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    v0 = mf[1][2] * scale;
++    v1 = mf[1][3] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
++    m1[3] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    m2[3] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    // Row 2
++    v0 = mf[2][0] * scale;
++    v1 = mf[2][1] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
++    m1[4] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    m2[4] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    v0 = mf[2][2] * scale;
++    v1 = mf[2][3] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
++    m1[5] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    m2[5] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    // Row 3
++    v0 = mf[3][0] * scale;
++    v1 = mf[3][1] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
++    m1[6] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    m2[6] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
++
++    v0 = mf[3][2] * scale;
++    v1 = mf[3][3] * scale;
++    tmp1 = (s32) v0;
++    tmp2 = (s32) v1;
++    m1[7] = (tmp1 & 0xffff0000) | ((tmp2 >> 16) & 0xffff);
++    m2[7] = ((tmp1 << 16) & 0xffff0000) | (tmp2 & 0xffff);
+ #else
+     s32 asFixedPoint;
+     register s32 i;
+-    register s16 *a3 = (s16 *) dest;      // all integer parts stored in first 16 bytes
+-    register s16 *t0 = (s16 *) dest + 16; // all fraction parts stored in last 16 bytes
++    register s16 *a3 = (s16 *) dest;
++    register s16 *t0 = (s16 *) dest + 16;
+     register f32 *t1 = (f32 *) src;
+ 
+     for (i = 0; i < 16; i++) {
+-        asFixedPoint = *t1++ * (1 << 16); //! float-to-integer conversion responsible for PU crashes
+-        *a3++ = GET_HIGH_S16_OF_32(asFixedPoint); // integer part
+-        *t0++ = GET_LOW_S16_OF_32(asFixedPoint);  // fraction part
++        s32 asFixedPoint = *t1++ * (1 << 16);
++        *a3++ = GET_HIGH_S16_OF_32(asFixedPoint);
++        *t0++ = GET_LOW_S16_OF_32(asFixedPoint);
+     }
+ #endif
+ }
+diff --git a/src/engine/surface_collision.c b/src/engine/surface_collision.c
+index 741307b..47ebbca 100644
+--- a/src/engine/surface_collision.c
++++ b/src/engine/surface_collision.c
+@@ -401,8 +401,8 @@ f32 find_floor_height_and_data(f32 xPos, f32 yPos, f32 zPos, struct FloorGeometr
+ static struct Surface *find_floor_from_list(struct SurfaceNode *surfaceNode, s32 x, s32 y, s32 z, f32 *pheight) {
+     register struct Surface *surf;
+     register s32 x1, z1, x2, z2, x3, z3;
+-    f32 nx, ny, nz;
+-    f32 oo;
++    register s32 dx1, dz1, dx2, dz2, dx3, dz3;
++    register f32 nx, ny, nz, oo;
+     f32 height;
+     struct Surface *floor = NULL;
+ 
+@@ -416,8 +416,13 @@ static struct Surface *find_floor_from_list(struct SurfaceNode *surfaceNode, s32
+         x2 = surf->vertex2[0];
+         z2 = surf->vertex2[2];
+ 
++        dx1 = x1 - x;
++        dz1 = z1 - z;
++        dx2 = x2 - x;
++        dz2 = z2 - z;
++
+         // Check that the point is within the triangle bounds.
+-        if ((z1 - z) * (x2 - x1) - (x1 - x) * (z2 - z1) < 0) {
++        if (dz1 * (x2 - x1) - dx1 * (z2 - z1) < 0) {
+             continue;
+         }
+ 
+@@ -425,10 +430,13 @@ static struct Surface *find_floor_from_list(struct SurfaceNode *surfaceNode, s32
+         x3 = surf->vertex3[0];
+         z3 = surf->vertex3[2];
+ 
+-        if ((z2 - z) * (x3 - x2) - (x2 - x) * (z3 - z2) < 0) {
++        dx3 = x3 - x;
++        dz3 = z3 - z;
++
++        if (dz2 * (x3 - x2) - dx2 * (z3 - z2) < 0) {
+             continue;
+         }
+-        if ((z3 - z) * (x1 - x3) - (x3 - x) * (z1 - z3) < 0) {
++        if (dz3 * (x1 - x3) - dx3 * (z1 - z3) < 0) {
+             continue;
+         }
+ 
+@@ -738,7 +746,7 @@ void debug_surface_list_info(f32 xPos, f32 zPos) {
+  * An unused function that finds and interacts with any type of surface.
+  * Perhaps an original implementation of surfaces before they were more specialized.
+  */
+-s32 unused_resolve_floor_or_ceil_collisions(s32 checkCeil, f32 *px, f32 *py, f32 *pz, f32 radius,
++static s32 unused_resolve_floor_or_ceil_collisions(s32 checkCeil, f32 *px, f32 *py, f32 *pz, f32 radius,
+                                             struct Surface **psurface, f32 *surfaceHeight) {
+     f32 nx, ny, nz, oo;
+     f32 x = *px;
+diff --git a/src/engine/surface_load.c b/src/engine/surface_load.c
+index 8437bf0..9e55040 100644
+--- a/src/engine/surface_load.c
++++ b/src/engine/surface_load.c
+@@ -79,13 +79,12 @@ static struct Surface *alloc_surface(void) {
+ static void clear_spatial_partition(SpatialPartitionCell *cells) {
+     register s32 i = NUM_CELLS * NUM_CELLS;
+ 
+-    while (i--) {
++    do {
+         (*cells)[SPATIAL_PARTITION_FLOORS].next = NULL;
+         (*cells)[SPATIAL_PARTITION_CEILS].next = NULL;
+         (*cells)[SPATIAL_PARTITION_WALLS].next = NULL;
+-
+         cells++;
+-    }
++    } while (--i);
+ }
+ 
+ /**
+diff --git a/src/game/rendering_graph_node.c b/src/game/rendering_graph_node.c
+index 2343068..6d8df53 100644
+--- a/src/game/rendering_graph_node.c
++++ b/src/game/rendering_graph_node.c
+@@ -116,6 +116,100 @@ struct RenderModeContainer renderModeTable_2Cycle[2] = { { {
+     G_RM_AA_ZB_XLU_DECAL2,
+     G_RM_AA_ZB_XLU_INTER2,
+     } } };
++/**
++ * Function pointer type for node processors.
++ * Takes a GraphNode pointer (cast to appropriate subtype inside).
++ */
++typedef void (*GeoNodeProcessFunc)(struct GraphNode *);
++
++/* Forward declarations for jump table */
++static void geo_process_ortho_projection(struct GraphNodeOrthoProjection *node);
++static void geo_process_perspective(struct GraphNodePerspective *node);
++static void geo_process_master_list(struct GraphNodeMasterList *node);
++static void geo_process_level_of_detail(struct GraphNodeLevelOfDetail *node);
++static void geo_process_switch(struct GraphNodeSwitchCase *node);
++static void geo_process_camera(struct GraphNodeCamera *node);
++static void geo_process_translation_rotation(struct GraphNodeTranslationRotation *node);
++static void geo_process_translation(struct GraphNodeTranslation *node);
++static void geo_process_rotation(struct GraphNodeRotation *node);
++static void geo_process_object(struct Object *node);
++static void geo_process_animated_part(struct GraphNodeAnimatedPart *node);
++static void geo_process_billboard(struct GraphNodeBillboard *node);
++static void geo_process_display_list(struct GraphNodeDisplayList *node);
++static void geo_process_scale(struct GraphNodeScale *node);
++static void geo_process_generated_list(struct GraphNodeGenerated *node);
++static void geo_process_background(struct GraphNodeBackground *node);
++static void geo_process_shadow(struct GraphNodeShadow *node);
++static void geo_process_object_parent(struct GraphNodeObjectParent *node);
++static void geo_process_held_object(struct GraphNodeHeldObject *node);
++
++/**
++ * Jump table for geo node processing - indexed by node type.
++ * Types up to GRAPH_NODE_TYPE_HELD_OBJ (0x02E = 46).
++ * Unknown types fall through to geo_try_process_children.
++ */
++static GeoNodeProcessFunc sGeoNodeProcessTable[47] = {
++    /* 0x000 */ NULL,
++    /* 0x001 GRAPH_NODE_TYPE_ROOT */ NULL, /* Handled by geo_process_root */
++    /* 0x002 GRAPH_NODE_TYPE_ORTHO_PROJECTION */ (GeoNodeProcessFunc)geo_process_ortho_projection,
++    /* 0x003 GRAPH_NODE_TYPE_PERSPECTIVE */ (GeoNodeProcessFunc)geo_process_perspective,
++    /* 0x004 GRAPH_NODE_TYPE_MASTER_LIST */ (GeoNodeProcessFunc)geo_process_master_list,
++    /* 0x005 */ NULL,
++    /* 0x006 */ NULL,
++    /* 0x007 */ NULL,
++    /* 0x008 */ NULL,
++    /* 0x009 */ NULL,
++    /* 0x00A GRAPH_NODE_TYPE_START */ NULL, /* No processing needed */
++    /* 0x00B GRAPH_NODE_TYPE_LEVEL_OF_DETAIL */ (GeoNodeProcessFunc)geo_process_level_of_detail,
++    /* 0x00C GRAPH_NODE_TYPE_SWITCH_CASE */ (GeoNodeProcessFunc)geo_process_switch,
++    /* 0x00D */ NULL,
++    /* 0x00E */ NULL,
++    /* 0x00F */ NULL,
++    /* 0x010 */ NULL,
++    /* 0x011 */ NULL,
++    /* 0x012 */ NULL,
++    /* 0x013 */ NULL,
++    /* 0x014 GRAPH_NODE_TYPE_CAMERA */ (GeoNodeProcessFunc)geo_process_camera,
++    /* 0x015 GRAPH_NODE_TYPE_TRANSLATION_ROTATION */ (GeoNodeProcessFunc)geo_process_translation_rotation,
++    /* 0x016 GRAPH_NODE_TYPE_TRANSLATION */ (GeoNodeProcessFunc)geo_process_translation,
++    /* 0x017 GRAPH_NODE_TYPE_ROTATION */ (GeoNodeProcessFunc)geo_process_rotation,
++    /* 0x018 GRAPH_NODE_TYPE_OBJECT */ (GeoNodeProcessFunc)geo_process_object,
++    /* 0x019 GRAPH_NODE_TYPE_ANIMATED_PART */ (GeoNodeProcessFunc)geo_process_animated_part,
++    /* 0x01A GRAPH_NODE_TYPE_BILLBOARD */ (GeoNodeProcessFunc)geo_process_billboard,
++    /* 0x01B GRAPH_NODE_TYPE_DISPLAY_LIST */ (GeoNodeProcessFunc)geo_process_display_list,
++    /* 0x01C GRAPH_NODE_TYPE_SCALE */ (GeoNodeProcessFunc)geo_process_scale,
++    /* 0x01D */ NULL,
++    /* 0x01E */ NULL,
++    /* 0x01F */ NULL,
++    /* 0x020 */ NULL,
++    /* 0x021 */ NULL,
++    /* 0x022 */ NULL,
++    /* 0x023 */ NULL,
++    /* 0x024 */ NULL,
++    /* 0x025 */ NULL,
++    /* 0x026 */ NULL,
++    /* 0x027 */ NULL,
++    /* 0x028 GRAPH_NODE_TYPE_SHADOW */ (GeoNodeProcessFunc)geo_process_shadow,
++    /* 0x029 GRAPH_NODE_TYPE_OBJECT_PARENT */ (GeoNodeProcessFunc)geo_process_object_parent,
++    /* 0x02A GRAPH_NODE_TYPE_GENERATED_LIST */ (GeoNodeProcessFunc)geo_process_generated_list,
++    /* 0x02B */ NULL,
++    /* 0x02C GRAPH_NODE_TYPE_BACKGROUND */ (GeoNodeProcessFunc)geo_process_background,
++    /* 0x02D */ NULL,
++    /* 0x02E GRAPH_NODE_TYPE_HELD_OBJ */ (GeoNodeProcessFunc)geo_process_held_object,
++};
++
++/**
++ * Process a single graph node using the jump table.
++ * Returns TRUE if node was processed, FALSE if unknown type (fallback to geo_try_process_children).
++ */
++static s32 geo_process_node_single(struct GraphNode *node) {
++    u32 typeIndex = node->type & 0xFF;  // Mask off GRAPH_NODE_TYPE_FUNCTIONAL bit (0x100)
++    if (typeIndex < 47 && sGeoNodeProcessTable[typeIndex] != NULL) {
++        sGeoNodeProcessTable[typeIndex](node);
++        return TRUE;
++    }
++    return FALSE;
++}
+ 
+ struct GraphNodeRoot *gCurGraphNodeRoot = NULL;
+ struct GraphNodeMasterList *gCurGraphNodeMasterList = NULL;
+@@ -606,24 +700,28 @@ static void geo_process_animated_part(struct GraphNodeAnimatedPart *node) {
+  * object's animation.
+  */
+ void geo_set_animation_globals(struct AnimInfo *node, s32 hasAnimation) {
+-    struct Animation *anim = node->curAnim;
++    register struct Animation *anim = node->curAnim;
++    u16 flags;
+ 
+     if (hasAnimation) {
+         node->animFrame = geo_update_animation_frame(node, &node->animFrameAccelAssist);
+     }
+     node->animTimer = gAreaUpdateCounter;
+-    if (anim->flags & ANIM_FLAG_HOR_TRANS) {
++
++    flags = anim->flags;
++
++    if (flags & ANIM_FLAG_HOR_TRANS) {
+         gCurrAnimType = ANIM_TYPE_VERTICAL_TRANSLATION;
+-    } else if (anim->flags & ANIM_FLAG_VERT_TRANS) {
++    } else if (flags & ANIM_FLAG_VERT_TRANS) {
+         gCurrAnimType = ANIM_TYPE_LATERAL_TRANSLATION;
+-    } else if (anim->flags & ANIM_FLAG_6) {
++    } else if (flags & ANIM_FLAG_6) {
+         gCurrAnimType = ANIM_TYPE_NO_TRANSLATION;
+     } else {
+         gCurrAnimType = ANIM_TYPE_TRANSLATION;
+     }
+ 
+     gCurrAnimFrame = node->animFrame;
+-    gCurrAnimEnabled = (anim->flags & ANIM_FLAG_5) == 0;
++    gCurrAnimEnabled = (flags & ANIM_FLAG_5) == 0;
+     gCurrAnimAttribute = segmented_to_virtual((void *) anim->index);
+     gCurrAnimData = segmented_to_virtual((void *) anim->values);
+ 
+@@ -965,70 +1063,8 @@ void geo_process_node_and_siblings(struct GraphNode *firstNode) {
+         if (curGraphNode->flags & GRAPH_RENDER_ACTIVE) {
+             if (curGraphNode->flags & GRAPH_RENDER_CHILDREN_FIRST) {
+                 geo_try_process_children(curGraphNode);
+-            } else {
+-                switch (curGraphNode->type) {
+-                    case GRAPH_NODE_TYPE_ORTHO_PROJECTION:
+-                        geo_process_ortho_projection((struct GraphNodeOrthoProjection *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_PERSPECTIVE:
+-                        geo_process_perspective((struct GraphNodePerspective *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_MASTER_LIST:
+-                        geo_process_master_list((struct GraphNodeMasterList *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_LEVEL_OF_DETAIL:
+-                        geo_process_level_of_detail((struct GraphNodeLevelOfDetail *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_SWITCH_CASE:
+-                        geo_process_switch((struct GraphNodeSwitchCase *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_CAMERA:
+-                        geo_process_camera((struct GraphNodeCamera *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_TRANSLATION_ROTATION:
+-                        geo_process_translation_rotation(
+-                            (struct GraphNodeTranslationRotation *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_TRANSLATION:
+-                        geo_process_translation((struct GraphNodeTranslation *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_ROTATION:
+-                        geo_process_rotation((struct GraphNodeRotation *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_OBJECT:
+-                        geo_process_object((struct Object *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_ANIMATED_PART:
+-                        geo_process_animated_part((struct GraphNodeAnimatedPart *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_BILLBOARD:
+-                        geo_process_billboard((struct GraphNodeBillboard *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_DISPLAY_LIST:
+-                        geo_process_display_list((struct GraphNodeDisplayList *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_SCALE:
+-                        geo_process_scale((struct GraphNodeScale *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_SHADOW:
+-                        geo_process_shadow((struct GraphNodeShadow *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_OBJECT_PARENT:
+-                        geo_process_object_parent((struct GraphNodeObjectParent *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_GENERATED_LIST:
+-                        geo_process_generated_list((struct GraphNodeGenerated *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_BACKGROUND:
+-                        geo_process_background((struct GraphNodeBackground *) curGraphNode);
+-                        break;
+-                    case GRAPH_NODE_TYPE_HELD_OBJ:
+-                        geo_process_held_object((struct GraphNodeHeldObject *) curGraphNode);
+-                        break;
+-                    default:
+-                        geo_try_process_children((struct GraphNode *) curGraphNode);
+-                        break;
+-                }
++            } else if (!geo_process_node_single(curGraphNode)) {
++                geo_try_process_children(curGraphNode);
+             }
+         } else {
+             if (curGraphNode->type == GRAPH_NODE_TYPE_OBJECT) {

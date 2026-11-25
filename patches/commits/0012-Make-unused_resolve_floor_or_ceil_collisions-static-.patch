@@ -1,0 +1,26 @@
+From 1eac337d4b7105f71a997c32dde80039982a91c5 Mon Sep 17 00:00:00 2001
+From: agent <agent@mario-eval>
+Date: Tue, 24 Nov 2026 19:06:07 +0000
+Subject: [PATCH 12/19] Make unused_resolve_floor_or_ceil_collisions static
+ (unused function, was 8.9% CPU on RR)
+
+---
+ src/engine/surface_collision.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/engine/surface_collision.c b/src/engine/surface_collision.c
+index 46bde5b..fadf6e6 100644
+--- a/src/engine/surface_collision.c
++++ b/src/engine/surface_collision.c
+@@ -737,7 +737,7 @@ void debug_surface_list_info(f32 xPos, f32 zPos) {
+  * An unused function that finds and interacts with any type of surface.
+  * Perhaps an original implementation of surfaces before they were more specialized.
+  */
+-s32 unused_resolve_floor_or_ceil_collisions(s32 checkCeil, f32 *px, f32 *py, f32 *pz, f32 radius,
++static s32 unused_resolve_floor_or_ceil_collisions(s32 checkCeil, f32 *px, f32 *py, f32 *pz, f32 radius,
+                                             struct Surface **psurface, f32 *surfaceHeight) {
+     f32 nx, ny, nz, oo;
+     f32 x = *px;
+-- 
+2.43.0
+

@@ -1,0 +1,50 @@
+{
+ "version": "2.1",
+ "target": "sm64",
+ "fingerprint": {
+  "grader_version": "2.1",
+  "grader_sha256": "8bd88a9970d551fa14abee6d83ee8828a407435ea1cc06149819fbd59d6d7f25",
+  "n64run_sha256": "efad72e8e7bd3da94ee9abf5ff87922f6cd9aed6ec0663ebb4af949b5380111f",
+  "corpus_config_sha256": "811be5da23053da6680781ab4153fb06fe5aad831915b295066cfc5c60fe868e",
+  "reference_rom_sha256": "4e5b65ee04aa3ed01e361acb689f2d64b4ae486d3e748db3fdf567526c9e836a"
+ },
+ "gates": {
+  "integrity": {
+   "pass": true,
+   "modified": []
+  },
+  "build": {
+   "pass": false,
+   "reason": "build failed; see build.log"
+  }
+ },
+ "workloads": {},
+ "rewards": {
+  "console": -1.0,
+  "stutter": -1.0,
+  "speed": -1.0,
+  "rdp": -1.0,
+  "rsp": -1.0,
+  "traffic": -1.0,
+  "memory": -1.0
+ },
+ "speedups": {
+  "console": 0.0,
+  "stutter": 0.0,
+  "speed": 0.0,
+  "rdp": 0.0,
+  "rsp": 0.0,
+  "traffic": 0.0,
+  "memory": 0.0
+ },
+ "workload_set": "d08c03e7f5863ef6be246e1b095d341e0d493ec53c86f5203e872025c0d932c6",
+ "status": "invalid",
+ "reason": "build failed; see build.log",
+ "failures": [
+  {
+   "gate": "build",
+   "reason": "build failed; see build.log"
+  }
+ ],
+ "grader_seconds": 0.9
+}
